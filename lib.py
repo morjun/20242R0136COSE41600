@@ -6,6 +6,8 @@ import cv2
 #pip install opencv-python
 from scipy.spatial import KDTree
 from time import sleep
+import hdbscan
+#pip install hdbscan
 
 SCENARIOS = {
     1: "01_straight_walk",
@@ -58,7 +60,7 @@ class PointProcessor:
         )
 
         [a, b, c, d] = plane_model
-        print(f"Plane equation: {a:.2f}x + {b:.2f}y + {c:.2f}z + {d:.2f} = 0")
+        # print(f"Plane equation: {a:.2f}x + {b:.2f}y + {c:.2f}z + {d:.2f} = 0")
 
         # 도로에 속하는 포인트 (inliers)
         road_pcd = pcd.select_by_index(inliers)
@@ -66,7 +68,7 @@ class PointProcessor:
         # 도로에 속하지 않는 포인트 (outliers)
         non_road_pcd = pcd.select_by_index(inliers, invert=True)
         self.floor_zvalue = road_pcd.get_center()[2]
-        print(f"floor.z = {self.floor_zvalue}")
+        # print(f"floor.z = {self.floor_zvalue}")
         return non_road_pcd
 
     def dbscan(self, pcd, eps=0.3, min_points=10, print_progress=False):
@@ -79,6 +81,14 @@ class PointProcessor:
                     eps=eps, min_points=min_points, print_progress=print_progress
                 )
             )
+        return labels
+    
+    def hdbscan(self, pcd, min_cluster_size=10, min_samples=10):
+        # HDBSCAN 클러스터링 적용
+        points = np.asarray(pcd.points)
+
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples, metric='euclidean')
+        labels = clusterer.fit_predict(points)
         return labels
 
     def recursive_cluster_matching(self, prev_clusters_centers_frames, curr_clusters_centers, num_history_frames, movement_threshold):
@@ -280,7 +290,7 @@ class PointProcessor:
     def color_clusters(self, pcd, labels):
         # 각 클러스터를 색으로 표시
         max_label = labels.max()
-        print(f"point cloud has {max_label + 1} clusters")
+        # print(f"point cloud has {max_label + 1} clusters")
 
         # 노이즈를 제거하고 각 클러스터에 색상 지정
         colors = plt.get_cmap("tab20")(labels / (max_label if max_label > 0 else 1))
@@ -292,7 +302,7 @@ class PointProcessor:
     def load_and_visualize_pcd(self, file_path, window_name="PCD TEST", point_size=1.0):
         # pcd 파일 로드
         pcd = o3d.io.read_point_cloud(file_path)
-        print(f"Point cloud has {len(pcd.points)} points.")
+        # print(f"Point cloud has {len(pcd.points)} points.")
 
         # 시각화 설정
         vis = o3d.visualization.Visualizer()
@@ -381,7 +391,7 @@ class PointProcessor:
         for pcd_file in pcd_files:
             pcd_file_path = os.path.join(pcd_path, pcd_file)
             pcd = o3d.io.read_point_cloud(pcd_file_path)
-            print(f"Point cloud has {len(pcd.points)} points.")
+            # print(f"Point cloud has {len(pcd.points)} points.")
 
             # 전처리
             voxel_pcd = self.voxel_downsampling(pcd, 0.2)
@@ -389,7 +399,8 @@ class PointProcessor:
             ror_cpd = self.ror(sor_cpd)
             non_road_pcd = self.remove_floor(ror_cpd)
 
-            labels = self.dbscan(non_road_pcd, 0.3, 7)
+            # labels = self.dbscan(non_road_pcd, 0.3, 7)
+            labels = self.hdbscan(non_road_pcd, 10, 10)
             colored_pcd = self.color_clusters(non_road_pcd, labels)
             result_pcds.append(colored_pcd)
 
