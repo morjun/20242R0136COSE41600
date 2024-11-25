@@ -67,7 +67,7 @@ class PointProcessor:
         print(f"floor.z = {self.floor_zvalue}")
         return non_road_pcd
 
-    def dbscan(self, pcd, eps=0.3, min_points=10, print_progress=True):
+    def dbscan(self, pcd, eps=0.6, min_points=7, print_progress=False):
         # DBSCAN 클러스터링 적용
         with o3d.utility.VerbosityContextManager(
             o3d.utility.VerbosityLevel.Debug
@@ -134,9 +134,9 @@ class PointProcessor:
         # 학습을 통해 조정 가능
         score_weights = {
             "points_in_cluster": 1,
-            "z_value_range": 0.1,
-            "height_diff": 0.1,
-            "distance": 0.5,
+            "z_value_range": 0.5,
+            "height_diff": 0.5,
+            "distance": 0,
         }
 
         if min_points_in_cluster <= len(cluster_indices) <= max_points_in_cluster:
@@ -186,7 +186,7 @@ class PointProcessor:
             cluster_pcds[curr_idx] = cluster_pcd
 
             score = self.get_score(cluster_pcd, cluster_indices)
-            if distance >= 0.3:
+            if distance >= 0.5:
                 score += 3  # 움직임이 크면 추가 점수
 
             scores[curr_idx] = score
