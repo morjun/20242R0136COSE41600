@@ -189,9 +189,9 @@ class PointProcessor:
 
         # 학습을 통해 조정 가능
         score_weights = {
-            "points_in_cluster": 1,
-            "z_value_range": 0.1,
-            "height_diff": 0.4,
+            "points_in_cluster": 10,
+            "z_value_range": 1,
+            "height_diff": 4,
             "distance": 0,
         }
 
@@ -225,11 +225,16 @@ class PointProcessor:
         누적 거리와 매칭 경로를 기반으로 Bounding Box 생성.
         """
         # 점수 기준
-        threshold_score = 10 # 총 점수가 이 값을 넘으면 Bounding Box 생성
+        threshold_score = 20 # 총 점수가 이 값을 넘으면 Bounding Box 생성
 
         bboxes_scored = []
+
         displacements_log = {}
         average_displacements = {}
+
+        num_points_log = {}
+        average_num_points = {}
+
         cluster_pcds = {}
         scores = {}
 
@@ -246,23 +251,35 @@ class PointProcessor:
             cluster_indices = np.where(labels == curr_idx)[0]
             cluster_pcd = pcd.select_by_index(cluster_indices)
             cluster_pcds[curr_idx] = cluster_pcd
+            path_length = len(path)
 
             # 기본 점수
             score = self.get_score(cluster_pcd, cluster_indices)
 
+            num_points_log[curr_idx] = len(cluster_indices)
+            average_num_points[curr_idx] = sum(num_points_log.values()) / len(num_points_log)
+            variance_num_points = sum([(n - average_num_points[curr_idx]) ** 2 for n in num_points_log.values()]) / len(num_points_log)
+
+            if len(num_points_log) > 1:
+                if variance_num_points != 0:
+                    score += 10.0 / variance_num_points
+                else:
+                    score += 50.0
+
             # 누적 거리 기반 점수 추가
             if curr_idx in displacements:
                 # print(f"Displacement: {displacements[curr_idx]}")
-                score += displacements[curr_idx] * 10.0  # 가중치 조정 가능
+                score += displacements[curr_idx] * 40.0  # 가중치 조정 가능
                 if curr_idx not in displacements_log:
                     displacements_log[curr_idx] = [displacements[curr_idx]]
 
-                displacements_log[curr_idx].append(displacements[curr_idx])
-                average_displacements[curr_idx] = sum(displacements_log[curr_idx]) / len(displacements_log[curr_idx])
-                score += average_displacements[curr_idx] * 60.0  # 가중치 조정 가능
-                if average_displacements[curr_idx] > 0.1:
-                    variance = sum([(d - average_displacements[curr_idx]) ** 2 for d in displacements_log[curr_idx]]) / len(displacements_log[curr_idx])
-                    score +=  (100.0 / variance)
+                if path_length > 1:
+                    displacements_log[curr_idx].append(displacements[curr_idx])
+                    average_displacements[curr_idx] = sum(displacements_log[curr_idx]) / len(displacements_log[curr_idx])
+                    if average_displacements[curr_idx] > 0.1:
+                        score += average_displacements[curr_idx] * 60.0  # 가중치 조정 가능
+                        variance = sum([(d - average_displacements[curr_idx]) ** 2 for d in displacements_log[curr_idx]]) / len(displacements_log[curr_idx])
+                        score +=  (100.0 / variance)
 
             scores[curr_idx] = score
 
@@ -350,7 +367,7 @@ class PointProcessor:
 
         vis.destroy_window()
 
-    def run(self, num_history_frames=10, movement_threshold=0.6):
+    def run(self, num_history_frames=10, movement_threshold=1.0):
         """
         이전 n 프레임을 고려하여 클러스터 매칭 및 경로 추적.
         """
