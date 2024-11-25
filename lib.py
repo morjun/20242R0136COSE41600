@@ -83,11 +83,11 @@ class PointProcessor:
             )
         return labels
     
-    def hdbscan(self, pcd, min_cluster_size=10, min_samples=10):
+    def hdbscan(self, pcd, min_cluster_size=10, min_samples=10, cluster_selection_epsilon=0.3):
         # HDBSCAN 클러스터링 적용
         points = np.asarray(pcd.points)
 
-        clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples, metric='euclidean')
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples, cluster_selection_epsilon=cluster_selection_epsilon, metric='euclidean')
         labels = clusterer.fit_predict(points)
         return labels
 
@@ -399,8 +399,8 @@ class PointProcessor:
             ror_cpd = self.ror(sor_cpd)
             non_road_pcd = self.remove_floor(ror_cpd)
 
-            # labels = self.dbscan(non_road_pcd, 0.3, 7)
-            labels = self.hdbscan(non_road_pcd, 10, 10)
+            labels = self.dbscan(non_road_pcd, 0.3, 7)
+            # labels = self.hdbscan(non_road_pcd, 10, 5, 0.3)
             colored_pcd = self.color_clusters(non_road_pcd, labels)
             result_pcds.append(colored_pcd)
 
