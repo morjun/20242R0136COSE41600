@@ -3,7 +3,7 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser(description='COSE416 HW1: Human Detection with a sequence of LiDAR sensor data(.pcd)')
-    parser.add_argument("scenario", type=int, default=1, help="Select scenario number (1~7)")
+    parser.add_argument("scenario", nargs='?', type=int, default=1, help="Select scenario number (1~7)")
     args = parser.parse_args()
 
     pcd_processor = PointProcessor(args)
