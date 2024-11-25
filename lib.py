@@ -385,8 +385,8 @@ class PointProcessor:
 
             # 전처리
             voxel_pcd = self.voxel_downsampling(pcd, 0.2)
-            ror_cpd = self.ror(voxel_pcd)
-            # ror_cpd = self.sor(voxel_pcd)
+            sor_cpd = self.sor(voxel_pcd)
+            ror_cpd = self.ror(sor_cpd)
             non_road_pcd = self.remove_floor(ror_cpd)
 
             labels = self.dbscan(non_road_pcd, 0.3, 7)
