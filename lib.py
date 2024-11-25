@@ -33,7 +33,7 @@ class PointProcessor:
     def __getattr__(self, item):
         return self.params.get(item, None)
 
-    def voxel_downsampling(self, pcd, voxel_size=0.5):
+    def voxel_downsampling(self, pcd, voxel_size=0.3):
         # 빠른 연산 및 전처리를 위한 Voxel downsampling
         return pcd.voxel_down_sample(voxel_size=voxel_size)
 
@@ -67,7 +67,7 @@ class PointProcessor:
         print(f"floor.z = {self.floor_zvalue}")
         return non_road_pcd
 
-    def dbscan(self, pcd, eps=0.4, min_points=6, print_progress=False):
+    def dbscan(self, pcd, eps=0.3, min_points=10, print_progress=False):
         # DBSCAN 클러스터링 적용
         with o3d.utility.VerbosityContextManager(
             o3d.utility.VerbosityLevel.Debug
@@ -153,7 +153,7 @@ class PointProcessor:
                 # 변위 계산
                 displacement = np.linalg.norm(curr_clusters_centers[curr_idx] - initial_position)
                 displacements[curr_idx] = displacement
-                if displacement > 1:
+                if displacement > 10:
                     print(f"Matched path: {matched_paths[curr_idx]}")
                     print(f"Initial position: {initial_position}")
                     print(f"Positions: ")
@@ -189,9 +189,9 @@ class PointProcessor:
 
         # 학습을 통해 조정 가능
         score_weights = {
-            "points_in_cluster": 10,
-            "z_value_range": 1,
-            "height_diff": 4,
+            "points_in_cluster": 1,
+            "z_value_range": 0.1,
+            "height_diff": 0.4,
             "distance": 0,
         }
 
@@ -225,15 +225,12 @@ class PointProcessor:
         누적 거리와 매칭 경로를 기반으로 Bounding Box 생성.
         """
         # 점수 기준
-        threshold_score = 20 # 총 점수가 이 값을 넘으면 Bounding Box 생성
+        threshold_score = 10 # 총 점수가 이 값을 넘으면 Bounding Box 생성
 
         bboxes_scored = []
 
         displacements_log = {}
         average_displacements = {}
-
-        num_points_log = {}
-        average_num_points = {}
 
         cluster_pcds = {}
         scores = {}
@@ -256,30 +253,23 @@ class PointProcessor:
             # 기본 점수
             score = self.get_score(cluster_pcd, cluster_indices)
 
-            num_points_log[curr_idx] = len(cluster_indices)
-            average_num_points[curr_idx] = sum(num_points_log.values()) / len(num_points_log)
-            variance_num_points = sum([(n - average_num_points[curr_idx]) ** 2 for n in num_points_log.values()]) / len(num_points_log)
-
-            if len(num_points_log) > 1:
-                if variance_num_points != 0:
-                    score += 10.0 / variance_num_points
-                else:
-                    score += 50.0
-
             # 누적 거리 기반 점수 추가
             if curr_idx in displacements:
                 # print(f"Displacement: {displacements[curr_idx]}")
-                score += displacements[curr_idx] * 40.0  # 가중치 조정 가능
-                if curr_idx not in displacements_log:
-                    displacements_log[curr_idx] = [displacements[curr_idx]]
+                score += displacements[curr_idx] * 5.0  # 가중치 조정 가능
 
-                if path_length > 1:
-                    displacements_log[curr_idx].append(displacements[curr_idx])
-                    average_displacements[curr_idx] = sum(displacements_log[curr_idx]) / len(displacements_log[curr_idx])
-                    if average_displacements[curr_idx] > 0.1:
-                        score += average_displacements[curr_idx] * 60.0  # 가중치 조정 가능
-                        variance = sum([(d - average_displacements[curr_idx]) ** 2 for d in displacements_log[curr_idx]]) / len(displacements_log[curr_idx])
-                        score +=  (100.0 / variance)
+                # if curr_idx not in displacements_log:
+                #     displacements_log[curr_idx] = [displacements[curr_idx]]
+                # else:
+                #     displacements_log[curr_idx].append(displacements[curr_idx])
+
+                # if path_length > 1:
+                #     average_displacements[curr_idx] = sum(displacements_log[curr_idx]) / len(displacements_log[curr_idx])
+                #     if average_displacements[curr_idx] > 0.5:
+                #         score += average_displacements[curr_idx] * 3.0  # 가중치 조정 가능
+                #         variance = sum([(d - average_displacements[curr_idx]) ** 2 for d in displacements_log[curr_idx]]) / len(displacements_log[curr_idx])
+                #         score +=  (0.00001 / variance)
+                #         print(f"log_length: {len(displacements_log[curr_idx])}, var: {variance}")
 
             scores[curr_idx] = score
 
@@ -346,7 +336,7 @@ class PointProcessor:
         pcd_list,
         bounding_boxes,
         window_name="Filtered Clusters and Bounding Boxes",
-        point_size=1.0,
+        point_size=2.0,
         fps=10,
     ):
         vis = o3d.visualization.Visualizer()
@@ -386,11 +376,12 @@ class PointProcessor:
             print(f"Point cloud has {len(pcd.points)} points.")
 
             # 전처리
-            voxel_pcd = self.voxel_downsampling(pcd)
+            voxel_pcd = self.voxel_downsampling(pcd, 0.2)
             ror_cpd = self.ror(voxel_pcd)
+            # ror_cpd = self.sor(voxel_pcd)
             non_road_pcd = self.remove_floor(ror_cpd)
 
-            labels = self.dbscan(non_road_pcd)
+            labels = self.dbscan(non_road_pcd, 0.3, 7)
             colored_pcd = self.color_clusters(non_road_pcd, labels)
             result_pcds.append(colored_pcd)
 
