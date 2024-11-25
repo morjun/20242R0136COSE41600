@@ -166,9 +166,10 @@ class PointProcessor:
                 displacement = np.linalg.norm(curr_clusters_centers[curr_idx] - initial_position)
                 displacements[curr_idx] = displacement
                 if displacement > 10:
-                    print(f"Matched path: {matched_paths[curr_idx]}")
                     print(f"Initial position: {initial_position}")
                     print(f"Displacement: {displacement}")
+
+                print(f"Matched Indices: {matched_paths[curr_idx]}")
                 print(f"Paths: ")
                 for idx, (prev_idx, curr_idx) in enumerate(matched_paths[curr_idx]):
                     if idx < path_length - 1:
