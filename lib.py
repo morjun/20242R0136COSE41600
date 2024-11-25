@@ -168,15 +168,15 @@ class PointProcessor:
                 if displacement > 10:
                     print(f"Matched path: {matched_paths[curr_idx]}")
                     print(f"Initial position: {initial_position}")
-                    print(f"Positions: ")
-                    for idx, (prev_idx, curr_idx) in enumerate(matched_paths[curr_idx]):
-                        if idx < path_length - 1:
-                            # print(f"frame: {-(path_length) + idx}, idx: {prev_idx} -> {curr_idx}")
-                            print(f"{idx}: {prev_clusters_centers_frames[-(path_length) + idx][prev_idx]} -> {prev_clusters_centers_frames[-(path_length)+ idx + 1][curr_idx]}")
-                        else:
-                            print(f"{idx}: {prev_clusters_centers_frames[-(path_length) + idx][prev_idx]} -> {curr_clusters_centers[curr_idx]}")
-                    # print(f"Current position {curr_clusters[curr_idx]}, Initial position {initial_position}")
                     print(f"Displacement: {displacement}")
+                print(f"Paths: ")
+                for idx, (prev_idx, curr_idx) in enumerate(matched_paths[curr_idx]):
+                    if idx < path_length - 1:
+                        # print(f"frame: {-(path_length) + idx}, idx: {prev_idx} -> {curr_idx}")
+                        print(f"{idx}: {prev_clusters_centers_frames[-(path_length) + idx][prev_idx]} -> {prev_clusters_centers_frames[-(path_length)+ idx + 1][curr_idx]}")
+                    else:
+                        print(f"{idx}: {prev_clusters_centers_frames[-(path_length) + idx][prev_idx]} -> {curr_clusters_centers[curr_idx]}")
+                # print(f"Current position {curr_clusters[curr_idx]}, Initial position {initial_position}")
 
         return matched_paths, list(unmatched_curr_clusters), displacements
 
@@ -184,7 +184,7 @@ class PointProcessor:
         score = 0
 
         # 필터링 기준 1. 클러스터 내 최대 최소 포인트 수
-        min_points_in_cluster = 11  # 클러스터 내 최소 포인트 수
+        min_points_in_cluster = 8  # 클러스터 내 최소 포인트 수
         max_points_in_cluster = 25  # 클러스터 내 최대 포인트 수
 
         # 필터링 기준 2. 클러스터 내 최소 최대 Z값
