@@ -2,6 +2,8 @@ import open3d as o3d
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import cv2
+#pip install opencv-python
 from scipy.spatial import KDTree
 from time import sleep
 
@@ -172,8 +174,8 @@ class PointProcessor:
         score = 0
 
         # 필터링 기준 1. 클러스터 내 최대 최소 포인트 수
-        min_points_in_cluster = 8  # 클러스터 내 최소 포인트 수
-        max_points_in_cluster = 20  # 클러스터 내 최대 포인트 수
+        min_points_in_cluster = 11  # 클러스터 내 최소 포인트 수
+        max_points_in_cluster = 25  # 클러스터 내 최대 포인트 수
 
         # 필터링 기준 2. 클러스터 내 최소 최대 Z값
         min_z_value = -1.5  # 클러스터 내 최소 Z값
@@ -183,16 +185,17 @@ class PointProcessor:
         min_height = 0.5  # Z값 차이의 최소값 (50cm?)
         max_height = 2.5  # Z값 차이의 최대값 (2m?)
 
-        max_distance = 30.0  # 원점으로부터의 최대 거리
+        # 필터링 기준 4. 클러스터 내 최대 거리
+        max_radius = 2.0 # 클러스터 내 최대 반지름
 
         # max_volume = 5.0  # 클러스터의 최대 부피
 
         # 학습을 통해 조정 가능
         score_weights = {
             "points_in_cluster": 1,
-            "z_value_range": 0.1,
+            "z_value_range": 0.5,
             "height_diff": 0.4,
-            "distance": 0,
+            "radius": 5,
         }
 
         if min_points_in_cluster <= len(cluster_indices) <= max_points_in_cluster:
@@ -214,9 +217,9 @@ class PointProcessor:
         if min_height <= height_diff <= max_height:
             score += score_weights["height_diff"]
 
-        distances = np.linalg.norm(points, axis=1)
-        if distances.max() <= max_distance:
-            score += score_weights["distance"]
+        radius = np.linalg.norm(points, axis=1).max()
+        if radius <= max_radius:
+            score += score_weights["radius"]
 
         return score
 
@@ -256,20 +259,8 @@ class PointProcessor:
             # 누적 거리 기반 점수 추가
             if curr_idx in displacements:
                 # print(f"Displacement: {displacements[curr_idx]}")
-                score += displacements[curr_idx] * 5.0  # 가중치 조정 가능
-
-                # if curr_idx not in displacements_log:
-                #     displacements_log[curr_idx] = [displacements[curr_idx]]
-                # else:
-                #     displacements_log[curr_idx].append(displacements[curr_idx])
-
-                # if path_length > 1:
-                #     average_displacements[curr_idx] = sum(displacements_log[curr_idx]) / len(displacements_log[curr_idx])
-                #     if average_displacements[curr_idx] > 0.5:
-                #         score += average_displacements[curr_idx] * 3.0  # 가중치 조정 가능
-                #         variance = sum([(d - average_displacements[curr_idx]) ** 2 for d in displacements_log[curr_idx]]) / len(displacements_log[curr_idx])
-                #         score +=  (0.00001 / variance)
-                #         print(f"log_length: {len(displacements_log[curr_idx])}, var: {variance}")
+                score += displacements[curr_idx] * (60.0 / self.num_history_frames)  # 가중치 조정 가능
+                score += path_length * 0.5
 
             scores[curr_idx] = score
 
@@ -336,12 +327,20 @@ class PointProcessor:
         pcd_list,
         bounding_boxes,
         window_name="Filtered Clusters and Bounding Boxes",
-        point_size=2.0,
+        point_size=1.0,
         fps=10,
     ):
+        window_width=1920
+        window_height=1080
+        video_dir = f"output/"
+
         vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name=window_name, width=1920, height=1080)
+        vis.create_window(window_name=window_name, width=window_width, height=window_height)
         vis.get_render_option().point_size = point_size
+
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')
+        video_path = os.path.join(video_dir, f"{SCENARIOS[self.scenario]}.mp4")
+        video_writer = cv2.VideoWriter(video_path, fourcc, fps, (window_width, window_height))
 
         for i in range(len(pcd_list)):
             vis.clear_geometries()
@@ -353,17 +352,26 @@ class PointProcessor:
             vis.poll_events()
             vis.update_renderer()
 
+            img = vis.capture_screen_float_buffer(do_render=True)
+            img = (255 * np.asarray(img)).astype(np.uint8)
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            video_writer.write(img)
+
             sleep(1.0 / fps)
 
         vis.destroy_window()
 
-    def run(self, num_history_frames=10, movement_threshold=1.0):
+        video_writer.release()
+
+    def run(self, num_history_frames=10):
         """
         이전 n 프레임을 고려하여 클러스터 매칭 및 경로 추적.
         """
         pcd_path = f"data/{SCENARIOS[self.scenario]}/pcd/"
         pcd_files = os.listdir(pcd_path)
         pcd_files.sort()
+
+        self.num_history_frames = num_history_frames
 
         result_pcds = []
         labels_sequence = []
@@ -394,7 +402,7 @@ class PointProcessor:
 
             # 클러스터 매칭 및 변위 계산
             matched_paths, unmatched_curr_clusters, displacements = self.recursive_cluster_matching(
-                history_clusters, cluster_centers, num_history_frames, movement_threshold
+                history_clusters, cluster_centers, num_history_frames, movement_threshold=0.3
             )
 
             # 히스토리 업데이트
@@ -409,4 +417,4 @@ class PointProcessor:
             bboxes_sequence.append(bboxes)
 
         # 결과 시각화
-        self.visualize_with_bounding_boxes(result_pcds, bboxes_sequence, point_size=2.0)
+        self.visualize_with_bounding_boxes(result_pcds, bboxes_sequence, point_size=1.0)
