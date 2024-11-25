@@ -67,7 +67,7 @@ class PointProcessor:
         print(f"floor.z = {self.floor_zvalue}")
         return non_road_pcd
 
-    def dbscan(self, pcd, eps=0.6, min_points=7, print_progress=False):
+    def dbscan(self, pcd, eps=0.4, min_points=7, print_progress=False):
         # DBSCAN 클러스터링 적용
         with o3d.utility.VerbosityContextManager(
             o3d.utility.VerbosityLevel.Debug
@@ -79,40 +79,74 @@ class PointProcessor:
             )
         return labels
 
-    def cluster_matching(self, prev_clusters, curr_clusters, movement_threshold=1.0):
+    def recursive_cluster_matching(
+        self, history_clusters_frames, curr_clusters, movement_threshold=0.5
+    ):
         """
-        이전 프레임과 현재 프레임의 클러스터를 비교하여 매칭.
-        움직임 기반으로 점수를 부여하고 새로운 클러스터를 추적 시작.
+        이전 n 프레임의 클러스터 중심점을 재귀적으로 현재 프레임과 매칭하여 최종 경로와 누적 거리 계산.
 
         Args:
-            prev_clusters (list): 이전 프레임의 클러스터 중심점 리스트 (Nx3 ndarray).
+            history_clusters (list): 이전 프레임들의 클러스터 중심점 리스트 (각 프레임별 Nx3 ndarray).
             curr_clusters (list): 현재 프레임의 클러스터 중심점 리스트 (Nx3 ndarray).
             movement_threshold (float): 중심점 간 거리 기준.
 
         Returns:
-            matched_clusters (list): 매칭된 클러스터 정보 (prev_idx, curr_idx, distance).
+            matched_paths (dict): 각 현재 클러스터와 매칭된 경로 정보 {curr_idx: [(history_idx, cluster_idx), ...]}.
             unmatched_curr_clusters (list): 매칭되지 않은 현재 클러스터 인덱스 리스트.
+            total_distances (dict): 각 현재 클러스터의 누적 거리 정보 {curr_idx: 누적 거리}.
         """
-        if not prev_clusters:
-            # 이전 클러스터가 없는 경우, 모든 현재 클러스터를 새로운 클러스터로 반환
-            return [], list(range(len(curr_clusters)))
+        if not history_clusters_frames:
+            # 이전 클러스터가 없으면, 모든 현재 클러스터를 새로운 클러스터로 간주
+            return (
+                {i: [] for i in range(len(curr_clusters))},
+                list(range(len(curr_clusters))),
+                {i: 0 for i in range(len(curr_clusters))},
+            )
 
-        # KDTree 생성 (이전 프레임 클러스터 중심점 기준)
+        # 현재 프레임 클러스터를 위한 결과 초기화
+        matched_paths = {}
+        total_distances = {}
+        path_distances = {}
+        unmatched_curr_clusters = set(range(len(curr_clusters)))
+
+        # 직전 프레임의 클러스터와 매칭
+        prev_clusters = history_clusters_frames[-1]
         kdtree = KDTree(prev_clusters)
 
-        # 현재 프레임 클러스터 중심점에 대해 최근접 이웃 검색
-        matched_clusters = []
-        unmatched_curr_indices = set(range(len(curr_clusters)))
-
         for curr_idx, curr_center in enumerate(curr_clusters):
-            distance, prev_idx = kdtree.query(
-                curr_center
-            )  # 최근접 이웃 거리와 인덱스 반환
-            if distance <= movement_threshold:
-                matched_clusters.append((prev_idx, curr_idx, distance))
-                unmatched_curr_indices.discard(curr_idx)  # 매칭된 클러스터 제거
+            distance, prev_idx = kdtree.query(curr_center)
 
-        return matched_clusters, list(unmatched_curr_indices)
+            if distance <= movement_threshold:
+                # 초기 매칭 경로 생성
+                matched_paths[curr_idx] = [(len(history_clusters_frames) - 1, prev_idx)]
+
+                # 누적 거리 계산
+                total_distances[curr_idx] = total_distances.get(curr_idx, 0) + distance
+
+                unmatched_curr_clusters.discard(curr_idx)
+
+        # 이전 프레임의 매칭 정보를 재귀적으로 이어가기
+        if len(history_clusters_frames) > 1:
+            prev_matched_paths, _, prev_total_distances = (
+                self.recursive_cluster_matching(
+                    history_clusters_frames[:-1],
+                    [prev_clusters[path[-1][1]] for path in matched_paths.values()],
+                    movement_threshold,
+                )
+            )
+
+            # 이전 매칭 정보와 현재 매칭 정보를 병합
+            for curr_idx, path in matched_paths.items():
+                # 경로 병합
+                if curr_idx in prev_matched_paths:
+                    matched_paths[curr_idx] = (
+                        prev_matched_paths[curr_idx] + path
+                    )  # list concatenation
+                # 거리 병합
+                if curr_idx in prev_total_distances:
+                    total_distances[curr_idx] += prev_total_distances.get(curr_idx, 0)
+
+        return matched_paths, list(unmatched_curr_clusters), total_distances
 
     def get_score(self, cluster_pcd, cluster_indices):
         score = 0
@@ -160,7 +194,12 @@ class PointProcessor:
 
         return score
 
-    def generate_bbox(self, pcd, labels, matched_clusters, unmatched_curr_clusters):
+    def generate_bbox(
+        self, pcd, labels, matched_paths, unmatched_curr_clusters, total_distances
+    ):
+        """
+        누적 거리와 매칭 경로를 기반으로 Bounding Box 생성.
+        """
         # 점수 기준
         threshold_score = 3  # 총 점수가 이 값을 넘으면 Bounding Box 생성
 
@@ -168,32 +207,37 @@ class PointProcessor:
         cluster_pcds = {}
         scores = {}
 
-        # unmatched clusters scoring
+        # Unmatched clusters scoring
         for cluster_id in unmatched_curr_clusters:
-            cluster_indices = np.where(labels == cluster_id)[
-                0
-            ]  # labels: 모든 점에 대한 클러스터 label 정보, i: 클러스터 번호
+            cluster_indices = np.where(labels == cluster_id)[0]
             cluster_pcd = pcd.select_by_index(cluster_indices)
             cluster_pcds[cluster_id] = cluster_pcd
             score = self.get_score(cluster_pcd, cluster_indices)
             scores[cluster_id] = score
 
-        # matched clusters scoring
-        for prev_idx, curr_idx, distance in matched_clusters:
+        # Matched clusters scoring with accumulated distance
+        for curr_idx, path in matched_paths.items():
             cluster_indices = np.where(labels == curr_idx)[0]
-
             cluster_pcd = pcd.select_by_index(cluster_indices)
             cluster_pcds[curr_idx] = cluster_pcd
 
+            # 기본 점수
             score = self.get_score(cluster_pcd, cluster_indices)
-            if distance >= 0.5:
-                score += 3  # 움직임이 크면 추가 점수
+
+            # 누적 거리 기반 점수 추가
+            if curr_idx in total_distances:
+                score += total_distances[curr_idx] * 6  # 가중치 조정 가능
+                if total_distances[curr_idx] > 0.3:
+                    print(
+                        f"Cluster {curr_idx} total distance: {total_distances[curr_idx]:.2f}"
+                    )
 
             scores[curr_idx] = score
 
-        for cluster_pcd in cluster_pcds.items():
-            if scores[cluster_pcd[0]] >= threshold_score:
-                bbox = cluster_pcds[cluster_pcd[0]].get_axis_aligned_bounding_box()
+        # Threshold에 따라 Bounding Box 생성
+        for cluster_id, score in scores.items():
+            if score >= threshold_score:
+                bbox = cluster_pcds[cluster_id].get_axis_aligned_bounding_box()
                 bbox.color = (1, 0, 0)
                 bboxes_scored.append(bbox)
 
@@ -274,7 +318,10 @@ class PointProcessor:
 
         vis.destroy_window()
 
-    def run(self):
+    def run(self, history_frames=10, movement_threshold=0.5):
+        """
+        이전 n 프레임을 고려하여 클러스터 매칭 및 경로 추적.
+        """
         pcd_path = f"data/{SCENARIOS[self.scenario]}/pcd/"
         pcd_files = os.listdir(pcd_path)
         pcd_files.sort()
@@ -282,45 +329,50 @@ class PointProcessor:
         result_pcds = []
         labels_sequence = []
         bboxes_sequence = []
-        prev_cluster_centers = []
-        # prev_pcd = None
+        history_clusters = []  # 히스토리 프레임 클러스터 중심점 리스트
 
         for pcd_file in pcd_files:
             pcd_file_path = os.path.join(pcd_path, pcd_file)
             pcd = o3d.io.read_point_cloud(pcd_file_path)
             print(f"Point cloud has {len(pcd.points)} points.")
 
+            # 전처리
             voxel_pcd = self.voxel_downsampling(pcd)
             ror_cpd = self.ror(voxel_pcd)
             non_road_pcd = self.remove_floor(ror_cpd)
 
             labels = self.dbscan(non_road_pcd)
             colored_pcd = self.color_clusters(non_road_pcd, labels)
-
             result_pcds.append(colored_pcd)
 
+            # 현재 프레임의 클러스터 중심점 계산
             cluster_centers = []
             for i in range(labels.max() + 1):
                 cluster_indices = np.where(labels == i)[0]
                 cluster_pcd = colored_pcd.select_by_index(cluster_indices)
-                cluster_centers.append(
-                    np.array(cluster_pcd.get_center())
-                )  # 중심점 추출
+                cluster_centers.append(np.array(cluster_pcd.get_center()))
 
-            matched_clusters, unmatched_curr_clusters = self.cluster_matching(
-                prev_cluster_centers, cluster_centers
+            # 클러스터 매칭 및 누적 거리 계산
+            matched_paths, unmatched_curr_clusters, total_distances = (
+                self.recursive_cluster_matching(
+                    history_clusters, cluster_centers, movement_threshold
+                )
             )
 
-            prev_cluster_centers = cluster_centers.copy()
+            # 히스토리 업데이트
+            history_clusters.append(cluster_centers)
+            if len(history_clusters) > history_frames:
+                history_clusters.pop(0)
 
-            labels_sequence.append(labels)
-
+            # Bounding Box 생성
             bboxes = self.generate_bbox(
-                colored_pcd, labels, matched_clusters, unmatched_curr_clusters
+                colored_pcd,
+                labels,
+                matched_paths,
+                unmatched_curr_clusters,
+                total_distances,
             )
             bboxes_sequence.append(bboxes)
 
-            # prev_pcd = colored_pcd
-            # self.load_and_visualize_pcd(pcd_file_path)
-
+        # 결과 시각화
         self.visualize_with_bounding_boxes(result_pcds, bboxes_sequence, point_size=2.0)
